@@ -2,7 +2,7 @@
 
 ## Scope
 
-`verify-local` is a Rust control plane for bounded, explicit state-machine exploration. Any language can participate by reading requests and writing responses on standard input/output. The bundled Rust, Python, and JavaScript adapters demonstrate that boundary.
+`verify-local` is a Rust control plane for bounded, explicit state-machine exploration. Any language can participate by reading requests and writing responses on standard input/output. The bundled Python and JavaScript adapters demonstrate that boundary; the Rust application example lives in the separate [S3 append proxy repository](https://github.com/s1liconcow/s3-append-proxy).
 
 Each execution starts a new process, resets synthetic state, chooses legal actions, collects property checks, and replays the complete action tape in another fresh process. Exact replay compares every canonical JSON response, including observations, enabled action objects, checks, witnesses, and extension fields. A matching final error alone is insufficient.
 
@@ -52,7 +52,7 @@ verify-local report .verify/minimized.json --events --from 0 --limit 8
 
 ## Manifest
 
-Keep the manifest in a directory containing all its declared files. Paths in identity lists must be relative, resolve within that directory, and name regular files. See `verify.append.json` and `examples/python/verify.json`.
+Keep the manifest in a directory containing all its declared files. Paths in identity lists must be relative, resolve within that directory, and name regular files. See `examples/python/verify.json` and `examples/javascript/verify.json`.
 
 - `version`: 1 for the manifest and JSONL protocol.
 - `adapter`: executable and argv array; no shell expansion. Executable resolution is recorded.
@@ -72,13 +72,13 @@ Each request occupies one line. Responses must have the same protocol version an
 
 ```json
 {"protocol":1,"request_id":0,"op":"reset","seed":1}
-{"protocol":1,"request_id":1,"op":"step","action":{"id":"publish:0","kind":"schedule","actor":0,"op":"publish"}}
+{"protocol":1,"request_id":1,"op":"step","action":{"id":"deliver:A","kind":"workload","operation":"A"}}
 ```
 
 An adapter response:
 
 ```json
-{"protocol":1,"request_id":1,"state":"stable-state-digest","enabled":[{"id":"restart:0","kind":"fault","actor":0,"op":"restart"}],"checks":[{"id":"append.committed_prefix","ok":true,"signature":"committed-prefix-lost"}],"witnesses":["lost_commit_response"],"terminal":false,"observation":{"length":6}}
+{"protocol":1,"request_id":1,"state":"stable-state-digest","enabled":[{"id":"checkpoint","kind":"schedule"},{"id":"crash","kind":"fault"}],"checks":[],"witnesses":[],"terminal":false,"observation":{"value":0}}
 ```
 
 Action kinds are `workload`, `fault`, `schedule`, and `time`. The controller sends the complete enabled action object unchanged. Action IDs are unique within a response. Response extension fields participate in replay. Duplicate JSON keys, duplicate property/action/witness IDs, invalid request IDs, and terminal states with enabled actions are rejected.
@@ -97,16 +97,6 @@ Shrinking performs bounded action deletion. Every accepted candidate must retain
 
 A repaired implementation should pass the retained scenario under an unchanged independent contract, then complete a fresh bounded campaign. Changed action availability or removed checks produces an explicit inconclusive regression. Requirements changes deserve a separate review from an application repair.
 
-## S3 demonstration boundary
+## Worked application
 
-`append-sim` calls the same `append-core::plan_append` function as the HTTP proxy. Its independently maintained commit history checks contiguous valid storage, preserved committed content, durable acknowledgments, and stable snapshot reads. Exposed transitions cover reads, immutable segment upload, manifest publication, CAS conflicts, upload crashes, lost replies, restarts, retries, and range/snapshot reads.
-
-The `lost-update` mutant deliberately replaces the simulator's conditional publication with an unconditional write. This demonstrates that the oracle detects a broken store protocol. It leaves the production proxy's conditional path intact. Production HTTP and S3-client behavior receive separate integration tests, including the actual AmazonS3 client against an embedded wire-contract emulator. Real AWS performance and provider qualification require a dedicated bucket run.
-
-## Sources
-
-- [S3 conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html).
-- [S3 consistency model](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html#ConsistencyModel).
-- [object_store 0.12.5 PutMode](https://docs.rs/object_store/0.12.5/object_store/enum.PutMode.html).
-
-See [S3 semantics](s3-semantics.md) for the storage contract and operational limits.
+The [S3 append proxy](https://github.com/s1liconcow/s3-append-proxy) owns the Rust application, simulation adapter, storage contract, counterexample, verification reports, and retained evidence. It consumes this toolbox through the language-neutral protocol. Follow that repository's pinned toolchain and demonstration commands to reproduce its application-specific results.

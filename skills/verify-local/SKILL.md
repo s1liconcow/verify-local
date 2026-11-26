@@ -9,7 +9,7 @@ Find reproducible violations of explicit properties. Keep execution, evidence, a
 
 ## Load only what is needed
 
-Use `verify-local` from PATH or the target checkout's `target/release/verify-local`. The Rust source and worked S3 example live in `https://github.com/s1liconcow/verify-local`. Build with `cargo build --release --workspace --locked`; install the controller with `cargo install --path crates/verify-local --locked`. Read `--help` for supported options. Use [rust-toolbox.md](references/rust-toolbox.md) only when writing an adapter or interpreting evidence. Rust produces evidence v2 and uses JSONL protocol v1.
+Use the target project's documented pinned `verify-local` binary, a PATH installation, or a toolbox checkout's `target/release/verify-local`. The Rust toolbox lives in `https://github.com/s1liconcow/verify-local`. The worked application and its verification evidence live in `https://github.com/s1liconcow/s3-append-proxy`. Build with `cargo build --release --workspace --locked`; install the controller with `cargo install --path crates/verify-local --locked`. Read `--help` for supported options. Use [rust-toolbox.md](references/rust-toolbox.md) only when writing an adapter or interpreting evidence. Rust produces evidence v2 and uses JSONL protocol v1.
 
 Keep adapters, manifests, contracts, and retained regressions in the target project. Put campaigns in a new ignored `.verify/` subdirectory. Follow the user's project and Git workflow.
 

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/verify-protocol", "crates/verify-local", "crates/append-core", "crates/append-proxy", "crates/append-sim"]
+members = ["crates/verify-protocol", "crates/verify-local"]
 resolver = "2"
 
 [workspace.package]
@@ -9,24 +9,15 @@ rust-version = "1.100"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-anyhow = "1"
-axum = "0.8"
-bytes = { version = "1", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
-futures = "0.3"
 hex = "0.4"
-http-body-util = "0.1"
 libc = "0.2"
-object_store = { version = "0.12", features = ["aws"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
-tower = { version = "0.5", features = ["util"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]
 lto = "thin"

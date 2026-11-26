@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproducible bounded verifier demonstration; every expected verdict is checked."""
+"""Run the language-neutral Python and JavaScript examples with checked verdicts."""
 import argparse
 import json
 from pathlib import Path
@@ -39,19 +39,8 @@ def main():
         print(json.dumps({'stage':label, **response}, separators=(',', ':')), flush=True)
         return response
 
-    invoke('doctor', ['doctor', 'verify.append.json'], 'READY')
-    found = invoke('mutant', ['run', 'verify.append-mutant.json', '--out', out / 'mutant',
-        '--runs', 100, '--steps', 100, '--seconds', 30, '--seed', 1], 'FOUND', 1)
-    failure = found['artifacts']['failure']
-    invoke('replay', ['replay', 'verify.append-mutant.json', failure], 'FOUND', 1)
-    minimized = out / 'minimized.json'
-    invoke('shrink', ['shrink', 'verify.append-mutant.json', failure, '--out', minimized,
-        '--attempts', 250, '--seconds', 30], 'FOUND', 1)
-    invoke('regression', ['regression', 'verify.append.json', minimized,
-        '--out', out / 'regression.json'], 'NO_FAILURE_WITHIN_BOUNDS')
-    invoke('correct', ['run', 'verify.append.json', '--out', out / 'correct',
-        '--runs', 100, '--steps', 100, '--seconds', 60, '--seed', 1], 'NO_FAILURE_WITHIN_BOUNDS')
     for language in ['python', 'javascript']:
+        invoke(f'{language}-doctor', ['doctor', f'examples/{language}/verify.json'], 'READY')
         invoke(language, ['run', f'examples/{language}/verify.json', '--out', out / language,
             '--runs', 100, '--steps', 80, '--seconds', 60, '--seed', 1], 'NO_FAILURE_WITHIN_BOUNDS')
     (out / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
