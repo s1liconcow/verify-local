@@ -299,6 +299,11 @@ pub async fn run(
                     "nonterminal state has no enabled actions",
                 ));
             }
+            if manifest.config.require_terminal && trace.stop != "terminal" {
+                return Err(Error::inconclusive(
+                    "step budget exhausted before required terminal state",
+                ));
+            }
             observed = None;
         }
         Ok(())
@@ -347,7 +352,8 @@ pub async fn run(
     let campaign = json!({
         "format":"verify-local-campaign","version":2,"name":manifest.config.name,
         "outcome":outcome,"reason":reason,"identity":identity,"boundary":manifest.config.boundary,
-        "bounds":{"runs":runs,"steps":steps,"seed":seed,"limits":limits},
+        "bounds":{"runs":runs,"steps":steps,"seed":seed,"limits":limits,
+                  "require_terminal":manifest.config.require_terminal},
         "runs_completed":records.len(),"actions":evidence.actions,"replays_matched":replayed_count,
         "elapsed_ms":elapsed_ms,"properties":evidence.properties,"witnesses":evidence.witnesses,
         "missing_properties":missing_properties,"missing_witnesses":missing_witnesses,
@@ -373,6 +379,7 @@ pub fn doctor(manifest: &Manifest) -> Result<Value> {
         "name":manifest.config.name,"identity":digest(&identity)?,
         "declared_files":identity.files.len(),"contract_files":identity.contract_files.len(),
         "properties":manifest.config.required_properties.len(),"witnesses":manifest.config.required_witnesses.len(),
+        "require_terminal":manifest.config.require_terminal,
         "transport":if cfg!(unix){"posix_process_group"}else{"unsupported"},
         "isolation":"trusted host process",
         "next":"run a bounded campaign; doctor does not execute or validate adapter determinism"}),
@@ -404,6 +411,7 @@ pub async fn replay(manifest: &Manifest, path: &Path, limits: &Limits) -> Result
     let outcome = if replay.failure.is_some() {
         "FOUND"
     } else if replay.stop == "no_enabled_actions"
+        || (manifest.config.require_terminal && replay.stop != "terminal")
         || !missing_properties.is_empty()
         || !missing_witnesses.is_empty()
     {
@@ -673,6 +681,7 @@ pub async fn regression(
     } else if !missing_properties.is_empty()
         || !missing_witnesses.is_empty()
         || missing_evaluation_count > 0
+        || (manifest.config.require_terminal && candidate.stop != "terminal")
         || !after.properties.contains_key(&target.property)
     {
         "INCONCLUSIVE"

@@ -4,7 +4,7 @@ A Rust toolbox for bounded local correctness verification, with compact agent-fa
 
 Specify properties, expose controlled scheduling and fault decisions, explore difficult histories, and keep reproducible counterexamples. The controller provides exact replay, failure reduction, contract-preserving regression, and evidence files. Its deterministic boundary is the application adapter; native scheduling, weak memory, and real provider behavior require their own verification backends.
 
-The [S3 append proxy implementation, verification reports, and evidence](https://github.com/s1liconcow/s3-append-proxy) now live in their own repository. This repository owns the reusable controller, protocol, skill, and generic language examples.
+The [S3 append proxy implementation, verification reports, and evidence](https://github.com/s1liconcow/s3-append-proxy) live in their own repository. This repository owns the reusable controller, async scheduler, history checker, protocol, and skill.
 
 ## Quick start
 
@@ -29,6 +29,7 @@ cargo install --path crates/verify-local --locked
 | --- | --- |
 | `crates/verify-local` | Compact CLI, bounded subprocess transport, exploration, exact replay, reduction, regression, paged reports |
 | `crates/verify-protocol` | Typed JSONL v1 messages, strict JSON parsing, canonicalization and protocol validation |
+| `crates/verify-async` | Explicit future polling and virtual Tokio time, plus bounded linearizability search |
 | `examples/python`, `examples/javascript` | Equivalent standard-library adapters demonstrating language-neutral operation |
 | `skills/verify-local` | Compact agent instructions and on-demand protocol reference |
 
@@ -64,7 +65,7 @@ An adapter reads one JSON request per line and returns one JSON response. It res
 
 Include production logic, the adapter, independent oracle, fixtures, and dependency locks in the declared identity. Pin unchanged oracle/contract files for cross-version regression. Missing required properties or witnesses make a clean campaign inconclusive. The subprocess backend bounds protocol handling and process cleanup; adapters execute as trusted host processes.
 
-For a Rust application that shares actual production logic with its simulator, see [s3-append-proxy](https://github.com/s1liconcow/s3-append-proxy). That repository contains its append implementation, intentional lost-update mutant, reduced scenario, benchmarks, and application-specific evidence.
+For a production service example, [s3-append-proxy](https://github.com/s1liconcow/s3-append-proxy) schedules the direct-S3 HTTP router and signed storage client, injects faults at the HTTP connector, and checks complete operation histories against an independent model. Its `verify.service.json` requires a terminal history on every clean run. The app also retains its original planner and local-tier simulations.
 
 ## Development
 
@@ -74,7 +75,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
-The 16 toolbox tests cover protocol validation, duplicate JSON keys, exact replay, shrinking, contract-preserving regression, per-event property eligibility, missing evidence, hidden entropy, timeouts, malformed traces, identity drift, output bounds, and exclusive artifact creation. CI runs the gates above, builds release binaries, and executes the Python and JavaScript demonstration.
+The toolbox tests cover deterministic future scheduling, real-time history constraints, terminal evidence, protocol validation, exact replay, shrinking, regression, identity drift, and subprocess and evidence bounds. CI runs the gates above, builds release binaries, and executes the Python and JavaScript demonstration.
 
 Use the installed `verify-local` skill or the exported skill directory to guide integration into a target application. Keep property implementations and production code changes separately reviewable.
 

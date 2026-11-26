@@ -60,6 +60,7 @@ Keep the manifest in a directory containing all its declared files. Paths in ide
 - `contract_files`: unchanged oracle/contract files required for cross-version regression. They must also appear in `identity_files`.
 - `required_properties`: property IDs that must be evaluated at least once across a clean campaign.
 - `required_witnesses`: reachable scenario IDs needed to support the campaign conclusion.
+- `require_terminal`: optional boolean, default `false`. When true, each clean run must reach `terminal: true`. A truncated history is inconclusive even with full aggregate property and witness coverage. Replay and regression honor the same rule. This setting is part of the pinned contract.
 - `boundary`: explicit `controlled` and `uncontrolled` lists.
 
 The identity includes source hashes, exact manifest bytes, adapter binary, runner binary, argv, selected environment, OS/architecture/kernel, and the pinned contract. Exact replay rejects identity changes. Cross-version regression permits changed application code while requiring the same declared contract, witnesses, boundary, and per-event evaluation opportunities; it replays the candidate twice. The runner cannot establish the semantic independence of an oracle or prevent a dishonest adapter from lying.
@@ -99,4 +100,6 @@ A repaired implementation should pass the retained scenario under an unchanged i
 
 ## Worked application
 
-The [S3 append proxy](https://github.com/s1liconcow/s3-append-proxy) owns the Rust application, simulation adapter, storage contract, counterexample, verification reports, and retained evidence. It consumes this toolbox through the language-neutral protocol. Follow that repository's pinned toolchain and demonstration commands to reproduce its application-specific results.
+The [S3 append proxy](https://github.com/s1liconcow/s3-append-proxy) drives the direct-S3 production HTTP router and AmazonS3 client under explicit scheduling. The connector intercepts signed requests before transport, separates staging, atomic publication, and reply delivery, and records durable operations. The app owns the fixture, independent sequential model, workloads, and evidence. See its `verify.service.json` and `scripts/service-demo.py`.
+
+The `verify-async` crate provides a runnable-task scheduler with paused Tokio time and a bounded real-time history checker. See [the adapter guide](../skills/verify-local/references/rust-toolbox.md#worked-application) for their scope and integration.

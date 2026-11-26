@@ -177,6 +177,27 @@ fn fixed_component_has_required_witnesses() {
     assert_eq!(result["missing_witnesses"]["count"], 0);
 }
 #[test]
+fn terminal_policy_rejects_clean_truncated_histories() {
+    for (mode, expected) in [("fixed", (2, "step_bound")), ("terminal", (0, "terminal"))] {
+        let f = Fixture::new(mode, false);
+        let mut config: Value = serde_json::from_slice(&fs::read(&f.manifest).unwrap()).unwrap();
+        config["require_terminal"] = json!(true);
+        fs::write(&f.manifest, serde_json::to_vec(&config).unwrap()).unwrap();
+        let (code, run) = f.run("run", "1", "1");
+        assert_eq!(code, expected.0, "{run}");
+        assert_eq!(run["missing_properties"]["count"], 0);
+        assert_eq!(run["replays"], 1);
+        let (code, replay) = cli(&[
+            "replay",
+            strpath(&f.manifest),
+            strpath(&f.root.join("run/sample-trace.json")),
+        ]);
+        assert_eq!(code, expected.0, "{replay}");
+        assert_eq!(replay["stop"], expected.1);
+        assert_eq!(replay["replay_match"], true);
+    }
+}
+#[test]
 fn cross_version_regression_preserves_contract() {
     let f = Fixture::new("buggy", true);
     let (code, result) = f.run("run", "10", "40");

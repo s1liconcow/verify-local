@@ -1,6 +1,6 @@
 ---
 name: verify-local
-description: Run bounded on-device correctness verification with a compact Rust toolbox and language-neutral adapters. Use for Antithesis-style testing, stateful/concurrency bugs, crash/retry correctness, fault injection, deterministic simulation, exact replay, failure shrinking, and evidence-driven repair. Choose stronger native backends when the target needs thread, memory, or OS control.
+description: Run bounded on-device correctness verification with a Rust toolbox and language-neutral adapters. Use for deterministic production service scheduling, stateful and concurrency bugs, fault injection at I/O boundaries, linearizability, exact replay, reduction, and evidence-driven repair. Choose native backends when the target needs thread, memory, or OS control.
 ---
 
 # Verify Local
@@ -16,7 +16,7 @@ Keep adapters, manifests, contracts, and retained regressions in the target proj
 ## Define the target and contract
 
 1. Identify production logic, state ownership, relevant effects, and existing tests. State the controlled decisions, modeled dependencies, remaining nondeterminism, and finite bounds.
-2. Choose a small coherent target. Prefer production logic behind explicit time, entropy, scheduling, network, and storage ports. Use native fuzzers, schedule explorers, sanitizers, or model checkers when their guarantees fit better.
+2. For service-level claims, drive normal production entry points through response-body consumption. Keep admission, retries, serialization, storage clients, and streaming in the exercised path. Intercept the lowest practical I/O boundary and enumerate any production work the adapter bypasses. Use a native backend when the property depends on native threads, memory ordering, disk, or OS scheduling.
 3. Derive stable property IDs from requirements or an independent reference history. Define eligibility, observation points, failure signatures, and meaningful reachability witnesses. Observe committed effects when checking idempotency. Model recovery deadlines explicitly; unfinished temporal obligations cannot pass.
 4. Pin oracle and contract files before changing implementation. Preserve their intent during repairs. Explain requirements changes separately.
 
@@ -26,7 +26,15 @@ Use one JSON request and response per line on stdin/stdout. Reset fresh modeled 
 
 Place the manifest above every declared identity file. Include executable argv, behavior-affecting source/fixture/lock files, nonempty `required_properties`, required witnesses, and explicit boundaries. Include unchanged oracle files in both `identity_files` and `contract_files` to support regression.
 
-Expose legal fault windows around durable commit, reply, cancellation, and restart. Distinguish failed writes from committed writes with lost replies. Use trusted synthetic adapters: the subprocess runner bounds transport and process lifetime, while filesystem/network confinement and aggregate memory isolation require another backend.
+## Verify a production async service
+
+1. Schedule invocation, runnable future polls, I/O delivery, cancellation, and virtual time as explicit choices. Use `verify-async::scheduler::Scheduler` for Rust futures with Tokio timers. Route background tasks and entropy through controllable boundaries where needed. Keep real-time and provider assumptions in the manifest.
+2. At the storage boundary, separate request transmission, staged transfer, atomic commit, and reply delivery. For an atomic backend, interrupted transfer can leave staged bytes and no visible change. After commit, drop or delay the reply while preserving the durable effect. If accepted I/O can finish after cancellation, model that possibility and drain it before sealing the history.
+3. Generate seeded workloads with overlapping writers and streaming readers, exact retries, conflicting idempotency intents, capacity exhaustion, cancellation, and retries after unknown outcomes with and without a durable commit. Require witnesses for actual faults, competing operations, and observed recoveries.
+4. Record each invocation and its observable outcome, including receipts, range metadata, bytes, partial responses, timeouts, and cancelled calls. Add unfaulted reads after in-flight work settles. Check the whole history against a separate sequential specification that never calls application planning, range, or receipt code. Preserve real-time precedence and model effects of indeterminate calls within their possible intervals. Compare durable effects with independently decoded observations.
+5. Set `require_terminal: true` in the manifest. Emit a clean terminal result only after the history is complete and its oracle finishes. Step bounds, dead ends, unresolved work, and search exhaustion leave the campaign inconclusive. `verify-async::history::linearize` provides bounded serialization search for up to 64 operations. The S3 append example uses `verify.service.json` and `scripts/service-demo.py` in the application repository.
+
+Use trusted adapters. The subprocess runner bounds transport and process lifetime. Filesystem and network confinement and aggregate memory isolation require another backend.
 
 ## Explore, reproduce, reduce
 

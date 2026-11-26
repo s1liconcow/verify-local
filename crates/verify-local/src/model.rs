@@ -31,6 +31,8 @@ pub struct Config {
     pub required_properties: Vec<String>,
     #[serde(default)]
     pub required_witnesses: Vec<String>,
+    #[serde(default)]
+    pub require_terminal: bool,
     pub boundary: Boundary,
 }
 #[derive(Clone, Debug)]
@@ -128,10 +130,14 @@ impl Manifest {
             .iter()
             .map(|f| (f.clone(), files[f].clone()))
             .collect::<BTreeMap<_, _>>();
-        let contract = digest(&json!({
+        let mut contract = json!({
             "properties":self.config.required_properties, "witnesses":self.config.required_witnesses,
             "boundary":self.config.boundary, "files":contract_files
-        }))?;
+        });
+        if self.config.require_terminal {
+            contract["require_terminal"] = json!(true);
+        }
+        let contract = digest(&contract)?;
         Ok(Identity {
             manifest: hash_file(&self.path)?,
             files,

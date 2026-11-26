@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/verify-protocol", "crates/verify-local"]
+members = ["crates/verify-protocol", "crates/verify-local", "crates/verify-async"]
 resolver = "2"
 
 [workspace.package]

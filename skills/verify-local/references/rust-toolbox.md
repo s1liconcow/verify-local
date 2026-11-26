@@ -60,6 +60,7 @@ Keep the manifest in a directory containing all its declared files. Paths in ide
 - `contract_files`: unchanged oracle/contract files required for cross-version regression. They must also appear in `identity_files`.
 - `required_properties`: property IDs that must be evaluated at least once across a clean campaign.
 - `required_witnesses`: reachable scenario IDs needed to support the campaign conclusion.
+- `require_terminal`: optional boolean, default `false`. When true, each clean run must reach `terminal: true` within its action budget. A cut-off run is inconclusive even if another run satisfied every required property and witness. This rule also applies to replay and regression and is pinned in the property contract.
 - `boundary`: explicit `controlled` and `uncontrolled` lists.
 
 The identity includes source hashes, exact manifest bytes, adapter binary, runner binary, argv, selected environment, OS/architecture/kernel, and the pinned contract. Exact replay rejects identity changes. Cross-version regression permits changed application code while requiring the same declared contract, witnesses, boundary, and per-event evaluation opportunities; it replays the candidate twice. The runner cannot establish the semantic independence of an oracle or prevent a dishonest adapter from lying.
@@ -99,4 +100,8 @@ A repaired implementation should pass the retained scenario under an unchanged i
 
 ## Worked application
 
-The [S3 append proxy](https://github.com/s1liconcow/s3-append-proxy) owns the Rust application, simulation adapter, storage contract, counterexample, verification reports, and retained evidence. It consumes this toolbox through the language-neutral protocol. Follow that repository's pinned toolchain and demonstration commands to reproduce its application-specific results.
+The direct-S3 service campaign in [s3-append-proxy](https://github.com/s1liconcow/s3-append-proxy) sends POST, GET, and HEAD through the production router and consumes their whole response streams. It uses the real S3 client to generate signed conditional requests. An adapter-owned HTTP connector controls request transfer, atomic S3 publication, and response delivery. The signed HTTP boundary excludes real DNS, TCP, TLS, and S3 durability. Run the app's `scripts/service-demo.py` after building and installing its pinned controller.
+
+`verify-async::scheduler::Scheduler` exposes stable IDs for runnable top-level futures, single polls, explicit cancellation, and paused Tokio time. Keep I/O completions and wakeups inside the adapter. Tokio spawning is rejected by the scheduler. Register controllable background futures as separate scheduled tasks.
+
+`verify-async::history::linearize` takes complete operation intervals, an initial model state, a state budget, and your independent transition function. Return all allowed successors for the observed outcome, including both unchanged and committed states for ambiguous effects when the evidence permits either. The search preserves response-before-invocation order, memoizes explored combinations, and returns a serialization, a contradiction, or budget exhaustion. Use a complete, bounded history and model the possible end of pending effects. Record raw evidence and final reads so later operations can rule out invalid interpretations of unknown outcomes.
