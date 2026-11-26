@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "name": "s3-append-lost-update-mutant",
+  "adapter": [
+    "target/release/append-sim",
+    "--mutant",
+    "lost-update"
+  ],
+  "identity_files": [
+    "Cargo.lock",
+    "Cargo.toml",
+    "crates/append-core/Cargo.toml",
+    "crates/append-core/src/lib.rs",
+    "crates/append-sim/Cargo.toml",
+    "crates/append-sim/src/main.rs",
+    "crates/append-sim/src/oracle.rs",
+    "crates/verify-protocol/src/lib.rs",
+    "verification/append-contract.json"
+  ],
+  "contract_files": [
+    "crates/append-sim/src/oracle.rs",
+    "verification/append-contract.json"
+  ],
+  "required_properties": [
+    "append.manifest_valid",
+    "append.committed_prefix",
+    "append.acknowledged_durable",
+    "append.snapshot_consistent"
+  ],
+  "required_witnesses": [
+    "append_committed",
+    "append_acknowledged",
+    "concurrent_writers",
+    "cas_conflict",
+    "crash_after_upload",
+    "lost_commit_response",
+    "recovered_committed_retry",
+    "idempotency_conflict",
+    "offset_conflict",
+    "snapshot_overlapped_append",
+    "range_read"
+  ],
+  "boundary": {
+    "controlled": [
+      "operation intents and payloads",
+      "production append planning logic",
+      "writer/read scheduling",
+      "atomic modeled manifest CAS",
+      "immutable modeled segment storage",
+      "crash and restart boundaries",
+      "commit response loss"
+    ],
+    "uncontrolled": [
+      "real S3 provider behavior and durability",
+      "HTTP client/server implementation",
+      "native threads and weak memory",
+      "operating system scheduling and networking"
+    ]
+  }
+}

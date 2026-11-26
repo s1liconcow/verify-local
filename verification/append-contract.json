@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "object": "virtual append-only byte stream over immutable segments and an atomic manifest",
+  "commit_point": "successful conditional manifest replacement or creation",
+  "idempotency": "bind request id to payload bytes and expected-offset intent; preserve original receipt forever within manifest capacity",
+  "properties": {
+    "append.manifest_valid": "ordered contiguous entries, unique ids, durable referenced bytes and matching checksums",
+    "append.committed_prefix": "all committed operation bodies remain present once in commit order",
+    "append.acknowledged_durable": "every acknowledged receipt names its original durable byte interval",
+    "append.snapshot_consistent": "a reader returns the bytes fixed by its initially loaded manifest"
+  },
+  "assumptions": [
+    "atomic single-key conditional writes",
+    "strongly consistent manifest reads",
+    "immutable durable segments",
+    "exclusive backing prefix; no external deletion or mutation"
+  ],
+  "limits": "bounded interleavings, four operation intents, no modeled weak memory or production HTTP runtime"
+}

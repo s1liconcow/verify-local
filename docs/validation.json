@@ -1,0 +1,336 @@
+{
+  "format": "verify-local-recorded-validation",
+  "version": 1,
+  "date": "2026-11-25",
+  "timezone": "America/Los_Angeles",
+  "environment": {
+    "os": "Linux",
+    "architecture": "x86_64",
+    "kernel": "6.18.57",
+    "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)",
+    "python": "3.12.14",
+    "node": "v24.22.3",
+    "cpu_model": "INTEL(R) XEON(R) PLATINUM 8573C",
+    "available_cpus": 9,
+    "host_scope": "shared container"
+  },
+  "identity": {
+    "cargo_lock_sha256": "2d2ac23857b423f02da828eca4a8679d33cbe1a31709be3e3139dbb63d6c1de2",
+    "binaries": {
+      "verify-local": "9a4b5429a599436439829bd1dd52cb9ebd2fe6089fdc43843beed524a403c3b9",
+      "append-sim": "3250b122ee0e36a32c4f6b9b6e0d7516fc66f6e129e62d4fb24b8af08dc18765",
+      "append-proxy": "8da5469a603f60969941a41c763c4425f6cb061e43cfa8f2074bb7e8549d7e0a",
+      "append-bench": "0280c898744205185299a2805bdaa8546839c7ad704323082054a8abfaddb4ec"
+    }
+  },
+  "gates": {
+    "rustfmt": "passed",
+    "clippy": "passed with warnings denied",
+    "workspace_tests": {
+      "passed": 38,
+      "failed": 0,
+      "groups": {
+        "append_core": 8,
+        "append_sim": 3,
+        "append_proxy_service_http": 7,
+        "append_proxy_s3_wire": 4,
+        "verifier_cli": 13,
+        "protocol": 3
+      }
+    }
+  },
+  "mutant": {
+    "outcome": "FOUND",
+    "runs": 1,
+    "actions": 29,
+    "replays": 1,
+    "elapsed_ms": 26,
+    "failure": {
+      "property": "append.committed_prefix",
+      "signature": "committed-prefix-lost",
+      "step": 29
+    }
+  },
+  "reduction": {
+    "actions": 6,
+    "attempts": 197,
+    "budget_exhausted": false,
+    "candidate_diverged": false,
+    "interruption": null,
+    "invalid_candidates": 148,
+    "minimality": "one-action-deletion-minimal",
+    "original_actions": 29
+  },
+  "minimal_counterexample": [
+    "read:1",
+    "read:0",
+    "upload:1",
+    "upload:0",
+    "publish_lost_reply:1",
+    "publish:0"
+  ],
+  "regression": {
+    "outcome": "NO_FAILURE_WITHIN_BOUNDS",
+    "actions": 6,
+    "candidate_replayed": true,
+    "exact_original_replay": false,
+    "original_property": "append.committed_prefix",
+    "missing_evaluations": {
+      "count": 0,
+      "items": [],
+      "omitted": 0
+    }
+  },
+  "campaigns": {
+    "correct": {
+      "outcome": "NO_FAILURE_WITHIN_BOUNDS",
+      "bounds": {
+        "limits": {
+          "max_output_bytes": 4194304,
+          "max_response_bytes": 262144,
+          "seconds": 60.0,
+          "timeout": 2.0
+        },
+        "runs": 100,
+        "seed": 1,
+        "steps": 100
+      },
+      "runs_completed": 100,
+      "actions": 10000,
+      "replays_matched": 100,
+      "elapsed_ms": 3409,
+      "properties": {
+        "append.acknowledged_durable": {
+          "evaluations": 10100,
+          "failures": 0
+        },
+        "append.committed_prefix": {
+          "evaluations": 10100,
+          "failures": 0
+        },
+        "append.manifest_valid": {
+          "evaluations": 10100,
+          "failures": 0
+        },
+        "append.snapshot_consistent": {
+          "evaluations": 10100,
+          "failures": 0
+        }
+      },
+      "witnesses": [
+        "append_acknowledged",
+        "append_committed",
+        "cas_conflict",
+        "concurrent_writers",
+        "crash_after_upload",
+        "deduplicated_retry",
+        "idempotency_conflict",
+        "lost_commit_response",
+        "offset_conflict",
+        "range_read",
+        "recovered_committed_retry",
+        "snapshot_overlapped_append",
+        "snapshot_read",
+        "write_error_before_commit"
+      ],
+      "missing_properties": [],
+      "missing_witnesses": [],
+      "boundary": {
+        "controlled": [
+          "operation intents and payloads",
+          "production append planning logic",
+          "writer/read scheduling",
+          "atomic modeled manifest CAS",
+          "immutable modeled segment storage",
+          "crash and restart boundaries",
+          "commit response loss"
+        ],
+        "uncontrolled": [
+          "real S3 provider behavior and durability",
+          "HTTP client/server implementation",
+          "native threads and weak memory",
+          "operating system scheduling and networking"
+        ]
+      },
+      "declared_identity_sha256": "8c6ca56c9a7b56c1587423edf7bb3c534c7eaeeef71a0f32a851b092b2f62f62"
+    },
+    "python": {
+      "outcome": "NO_FAILURE_WITHIN_BOUNDS",
+      "bounds": {
+        "limits": {
+          "max_output_bytes": 4194304,
+          "max_response_bytes": 262144,
+          "seconds": 60.0,
+          "timeout": 2.0
+        },
+        "runs": 100,
+        "seed": 1,
+        "steps": 80
+      },
+      "runs_completed": 100,
+      "actions": 8000,
+      "replays_matched": 100,
+      "elapsed_ms": 9408,
+      "properties": {
+        "counter.acknowledged_durable": {
+          "evaluations": 6390,
+          "failures": 0
+        },
+        "counter.effect_once": {
+          "evaluations": 7302,
+          "failures": 0
+        },
+        "counter.matches_history": {
+          "evaluations": 7302,
+          "failures": 0
+        }
+      },
+      "witnesses": [
+        "acknowledged",
+        "crash_after_checkpoint",
+        "deduplicated_retry",
+        "restarted",
+        "retry_after_restart"
+      ],
+      "missing_properties": [],
+      "missing_witnesses": [],
+      "boundary": {
+        "controlled": [
+          "operation delivery",
+          "checkpoint and reply scheduling",
+          "crash and restart placement",
+          "modeled durable counter and receipts"
+        ],
+        "uncontrolled": [
+          "real storage durability",
+          "native threads and weak memory",
+          "network and operating-system behavior"
+        ]
+      },
+      "declared_identity_sha256": "43062b9c21e2ba83c340d5b46722294c61db64bce831e9b493fabd24acc8aa89"
+    },
+    "javascript": {
+      "outcome": "NO_FAILURE_WITHIN_BOUNDS",
+      "bounds": {
+        "limits": {
+          "max_output_bytes": 4194304,
+          "max_response_bytes": 262144,
+          "seconds": 60.0,
+          "timeout": 2.0
+        },
+        "runs": 100,
+        "seed": 1,
+        "steps": 80
+      },
+      "runs_completed": 100,
+      "actions": 8000,
+      "replays_matched": 100,
+      "elapsed_ms": 16767,
+      "properties": {
+        "counter.acknowledged_durable": {
+          "evaluations": 6390,
+          "failures": 0
+        },
+        "counter.effect_once": {
+          "evaluations": 7302,
+          "failures": 0
+        },
+        "counter.matches_history": {
+          "evaluations": 7302,
+          "failures": 0
+        }
+      },
+      "witnesses": [
+        "acknowledged",
+        "crash_after_checkpoint",
+        "deduplicated_retry",
+        "restarted",
+        "retry_after_restart"
+      ],
+      "missing_properties": [],
+      "missing_witnesses": [],
+      "boundary": {
+        "controlled": [
+          "operation delivery",
+          "checkpoint and reply scheduling",
+          "crash and restart placement",
+          "modeled durable counter and receipts"
+        ],
+        "uncontrolled": [
+          "real storage durability",
+          "native threads and weak memory",
+          "network and operating-system behavior"
+        ]
+      },
+      "declared_identity_sha256": "4e6d8a62583f432666290901e5a8d4340487b8e24172c00b5784a739ffeb851b"
+    }
+  },
+  "http_demo": {
+    "outcome": "PASS",
+    "backend": "InMemory via actual HTTP server",
+    "concurrent_records": 32,
+    "checks": [
+      "append offset",
+      "original receipt on retry",
+      "cross-segment range",
+      "idempotency conflict",
+      "concurrent exactly-once effects"
+    ]
+  },
+  "benchmarks": [
+    {
+      "command": "target/release/append-bench --records 2000 --objects 32 --concurrency 8 --bytes 65536",
+      "records": 2000,
+      "objects": 32,
+      "workers": 8,
+      "payload_bytes": 65536,
+      "seconds": 0.177879405,
+      "appends_per_second": 11243.57,
+      "logical_mib_per_second": 702.72,
+      "latency_us": {
+        "p50": 233,
+        "p95": 2737,
+        "p99": 10107
+      }
+    },
+    {
+      "command": "target/release/append-bench --records 1000 --objects 1 --concurrency 8 --bytes 65536",
+      "records": 1000,
+      "objects": 1,
+      "workers": 8,
+      "payload_bytes": 65536,
+      "seconds": 1.379754787,
+      "appends_per_second": 724.77,
+      "logical_mib_per_second": 45.3,
+      "latency_us": {
+        "p50": 1322,
+        "p95": 2577,
+        "p99": 54385
+      }
+    }
+  ],
+  "benchmark_scope": "Actual production AppendService hashing, planning, manifest serialization and CAS over object_store::memory::InMemory; reused immutable Bytes payloads; excludes HTTP upload allocation, network, real S3 latency and durability. Measurements are observations on one shared host.",
+  "s3_wire_scope": "Actual AmazonS3 HTTP client against embedded wire-contract emulator; checks signing-header presence, opaque ETags and conditional-write semantics; no cryptographic SigV4 validation or AWS qualification.",
+  "skill_trial": {
+    "outcome": "NO_FAILURE_WITHIN_BOUNDS",
+    "runs": 100,
+    "actions": 8000,
+    "replays": 100,
+    "elapsed_ms": 15480,
+    "inspection": "doctor, compact campaign report and two eight-event pages",
+    "scope": "synthetic JavaScript counter; independent agent following installed skill"
+  },
+  "reproduce": [
+    "cargo test --workspace --locked",
+    "python3 scripts/demo.py --skip-build",
+    "python3 scripts/http-demo.py"
+  ],
+  "limitations": [
+    "finite sampled safety verification",
+    "modeled atomic CAS and durable immutable storage",
+    "trusted adapter/oracle, no OS-level deterministic scheduling",
+    "vector manifest O(n) per append and bounded capacity",
+    "no compaction or orphan garbage collection",
+    "real AWS performance/provider qualification not performed"
+  ]
+}

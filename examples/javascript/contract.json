@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "description": "Synthetic counter example; persistence is modeled in memory.",
+  "operations": {
+    "A": 1,
+    "B": 3
+  },
+  "properties": {
+    "counter.effect_once": "Each operation ID produces at most one committed increment.",
+    "counter.matches_history": "Counter value equals the sum of distinct operations observed in the independent commit history.",
+    "counter.acknowledged_durable": "Every acknowledged operation has a durable receipt and exactly one observed committed effect after modeled restart."
+  },
+  "required_witnesses": [
+    "crash_after_checkpoint",
+    "retry_after_restart",
+    "deduplicated_retry",
+    "acknowledged"
+  ],
+  "assumptions": [
+    "Checkpoint atomically publishes value and receipt.",
+    "Crashes discard pending requests and preserve the modeled durable state.",
+    "Operation IDs and deltas are fixed fixtures."
+  ],
+  "limits": [
+    "No real filesystem, database, network, weak-memory or native-thread behavior is exercised."
+  ]
+}

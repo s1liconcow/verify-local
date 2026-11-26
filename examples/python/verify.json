@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "idempotent-counter-python",
+  "adapter": [
+    "python3",
+    "adapter.py"
+  ],
+  "identity_files": [
+    "adapter.py",
+    "contract.json"
+  ],
+  "contract_files": [
+    "contract.json"
+  ],
+  "required_properties": [
+    "counter.effect_once",
+    "counter.matches_history",
+    "counter.acknowledged_durable"
+  ],
+  "required_witnesses": [
+    "crash_after_checkpoint",
+    "retry_after_restart",
+    "deduplicated_retry",
+    "acknowledged"
+  ],
+  "boundary": {
+    "controlled": [
+      "operation delivery",
+      "checkpoint and reply scheduling",
+      "crash and restart placement",
+      "modeled durable counter and receipts"
+    ],
+    "uncontrolled": [
+      "real storage durability",
+      "native threads and weak memory",
+      "network and operating-system behavior"
+    ]
+  }
+}

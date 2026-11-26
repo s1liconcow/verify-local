@@ -1,0 +1,51 @@
+{
+  "format": "portable-scenario-description",
+  "version": 1,
+  "scope": "Six-action minimized counterexample discovered by scripts/demo.py; regenerate full build-bound evidence with that script.",
+  "actions": [
+    {
+      "actor": 1,
+      "id": "read:1",
+      "kind": "schedule",
+      "op": "read"
+    },
+    {
+      "actor": 0,
+      "id": "read:0",
+      "kind": "schedule",
+      "op": "read"
+    },
+    {
+      "actor": 1,
+      "id": "upload:1",
+      "kind": "schedule",
+      "op": "upload"
+    },
+    {
+      "actor": 0,
+      "id": "upload:0",
+      "kind": "schedule",
+      "op": "upload"
+    },
+    {
+      "actor": 1,
+      "id": "publish_lost_reply:1",
+      "kind": "fault",
+      "op": "publish_lost_reply"
+    },
+    {
+      "actor": 0,
+      "id": "publish:0",
+      "kind": "schedule",
+      "op": "publish"
+    }
+  ],
+  "property": "append.committed_prefix",
+  "signature": "committed-prefix-lost",
+  "mutant_outcome": "committed bytes from request-b disappear when stale request-a unconditionally overwrites the manifest",
+  "correct_outcome": "request-a CAS is rejected; request-b remains committed and request-a can reread/retry",
+  "contract_files_sha256": {
+    "crates/append-sim/src/oracle.rs": "be24d5fa40e6f5a8400b051f087cc5294fc5823332e3c5b23e1c08260b7a9328",
+    "verification/append-contract.json": "438218798fadcf8a9c07c2c1ca8543e0ddeeedcd227c9c01d4b5f48010fa5f08"
+  }
+}
