@@ -371,6 +371,34 @@ fn guided_corpus_reconstructs_prefixes_without_importing_property_evidence() {
     let (code, first) = explore("initial", &[]);
     assert_eq!(code, 2, "{first}");
     assert!(first["guidance"]["pending"].as_u64().unwrap() > 0);
+    let mixed = f.root.join("mixed");
+    let (code, result) = cli(&[
+        "run",
+        strpath(&f.manifest),
+        "--guided",
+        "--runs",
+        "4",
+        "--steps",
+        "1",
+        "--out",
+        strpath(&mixed),
+    ]);
+    assert_eq!(code, 2, "{result}");
+    assert!(result["guidance"]["branches_replayed"].as_u64().unwrap() > 0);
+    let campaign: Value =
+        serde_json::from_slice(&fs::read(mixed.join("campaign.json")).unwrap()).unwrap();
+    let fresh: Vec<_> = campaign["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["branch"].is_null())
+        .map(|r| r["seed"].as_u64().unwrap())
+        .collect();
+    assert_eq!(fresh, (1..=fresh.len() as u64).collect::<Vec<_>>());
+    assert_eq!(
+        result["guidance"]["next_fresh_seed"],
+        fresh.len() as u64 + 1
+    );
     let corpus_path = f.root.join("initial/frontier.json");
     let original = fs::read(&corpus_path).unwrap();
     let mut corpus: Value = serde_json::from_slice(&original).unwrap();
@@ -485,5 +513,17 @@ fn repeated_signatures_share_one_replayable_finding() {
         assert_eq!(code, 1, "{replay}");
         assert_eq!(replay["failure"]["signature"], finding["signature"]);
     }
+    let (_, report) = cli(&[
+        "report",
+        strpath(&out.join("campaign.json")),
+        "--from",
+        "1",
+        "--limit",
+        "1",
+    ]);
+    assert_eq!(
+        report["finding_page"]["items"],
+        json!([campaign["findings"][1]])
+    );
     assert!(!out.join("failure-0003.json").exists());
 }

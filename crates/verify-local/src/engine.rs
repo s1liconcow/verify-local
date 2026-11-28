@@ -262,6 +262,7 @@ pub async fn run(
     };
     let imported = frontier.len();
     let mut branches_run = 0;
+    let mut fresh_runs = 0u64;
     let out = output_dir(out)?;
     let mut evidence = Evidence::default();
     let mut visits = Visits::new();
@@ -292,7 +293,16 @@ pub async fn run(
             } else {
                 None
             };
-            let run_seed = branch.as_ref().map_or(choice_seed, |b| b.seed);
+            // Keep fresh workloads contiguous even if an adapter dispatches by seed parity.
+            let run_seed = if let Some(branch) = &branch {
+                branch.seed
+            } else {
+                let next = seed
+                    .checked_add(fresh_runs)
+                    .ok_or_else(|| Error::harness("seed overflow"))?;
+                fresh_runs += 1;
+                next
+            };
             let mut trace = execute(
                 &execution,
                 run_seed,
@@ -427,6 +437,7 @@ pub async fn run(
     let guidance = if guided {
         Some(
             json!({"imported":imported, "branches_replayed":branches_run,
+        "fresh_runs":fresh_runs,"next_fresh_seed":seed.checked_add(fresh_runs),
         "pending":frontier.len(), "queue_capped":frontier.capped,"visited_capped":frontier.visited_capped()}),
         )
     } else {
@@ -829,12 +840,16 @@ pub fn report(path: &Path, events: bool, from: usize, limit: usize) -> Result<Va
                 .take(limit)
                 .map(|(k, v)| json!({"id":k,"counts":v}))
                 .collect::<Vec<_>>();
+            let findings = value["findings"].as_array().map(|entries| {
+                json!({"from":from, "limit":limit, "total":entries.len(),
+                       "items":entries.iter().skip(from).take(limit).collect::<Vec<_>>()})
+            });
             Ok(
                 json!({"outcome":value["outcome"],"reason":value["reason"],"runs":value["runs_completed"],
                 "actions":value["actions"],"replays":value["replays_matched"],"elapsed_ms":value["elapsed_ms"],
                 "artifacts":value["artifacts"],"guidance":value["guidance"],
                 "distinct_findings":value["findings"].as_array().map(Vec::len).unwrap_or_else(|| usize::from(value["artifacts"]["failure"].is_string())),
-                "property_page":{"from":from,"limit":limit,"total":properties.len(),"items":selected},
+                "finding_page":findings,"property_page":{"from":from,"limit":limit,"total":properties.len(),"items":selected},
                 "missing_properties":short_list(&serde_json::from_value::<Vec<String>>(value["missing_properties"].clone())?),
                 "missing_witnesses":short_list(&serde_json::from_value::<Vec<String>>(value["missing_witnesses"].clone())?)}),
             )
