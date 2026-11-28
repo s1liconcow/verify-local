@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the language-neutral Python and JavaScript examples with checked verdicts."""
+"""Verify the language adapters and a crash/retry scenario against an HTTP/SQLite service."""
 import argparse
 import json
 from pathlib import Path
@@ -43,6 +43,35 @@ def main():
         invoke(f'{language}-doctor', ['doctor', f'examples/{language}/verify.json'], 'READY')
         invoke(language, ['run', f'examples/{language}/verify.json', '--out', out / language,
             '--runs', 100, '--steps', 80, '--seconds', 60, '--seed', 1], 'NO_FAILURE_WITHIN_BOUNDS')
+    fixed = 'examples/sqlite-http/verify.json'
+    mutant = 'examples/sqlite-http/verify-mutant.json'
+    bounds = ['--runs', 8, '--steps', 12, '--seconds', 60, '--guided']
+    # One execution cannot witness both a pre-commit kill and a post-commit kill.
+    first = invoke('sqlite-seed', ['run', fixed, '--guided', '--steps', 12, '--runs', 1,
+                   '--out', out / 'seed'], 'INCONCLUSIVE', 2)
+    assert first['replays'] == 1 and first['guidance']['pending'] > 0
+    baseline = invoke('sqlite-baseline', ['run', fixed, *bounds, '--out', out / 'baseline',
+                      '--corpus-from', first['artifacts']['frontier']], 'NO_FAILURE_WITHIN_BOUNDS')
+    assert baseline['replays'] == 8 and baseline['guidance']['branches_replayed'] > 0
+    bug = invoke('sqlite-mutant', ['run', mutant, *bounds, '--out', out / 'mutant'], 'FOUND', 1)
+    assert bug['failure']['property'] == 'ledger.once'
+    failure = bug['artifacts']['failure']
+    invoke('sqlite-replay', ['replay', mutant, failure], 'FOUND', 1)
+    reduced = out / 'reduced.json'
+    invoke('sqlite-shrink', ['shrink', mutant, failure, '--out', reduced], 'FOUND', 1)
+    invoke('sqlite-regression', ['regression', fixed, reduced], 'NO_FAILURE_WITHIN_BOUNDS')
+
+    # Reconstruct the same committed transaction and let the HTTP reply through.
+    trace = json.loads(reduced.read_text())
+    event = next(i for i, action in enumerate(trace['actions']) if action['id'] == 'kill')
+    alternate = out / 'reply-instead.json'
+    fork = invoke('sqlite-fork', ['fork', mutant, reduced, '--at', event, '--action', 'reply',
+                  '--steps', 4, '--out', alternate], 'INCONCLUSIVE', 2)
+    assert fork['replay_match'] and fork['stop'] == 'terminal' and fork['failure'] is None
+    assert fork['missing_witnesses']['count'] == 2
+    final = json.loads(alternate.read_text())['responses'][-1]
+    assert final['observation']['balance']['count'] == 1
+    assert any(c['id'] == 'ledger.once' and c['ok'] for c in final['checks'])
     (out / 'summary.json').write_text(json.dumps(results, indent=2) + '\n')
     print(json.dumps({'outcome':'PASS', 'summary':str(out / 'summary.json')}, separators=(',', ':')))
 

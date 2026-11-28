@@ -1,6 +1,6 @@
 ---
 name: verify-local
-description: Run bounded on-device correctness verification with a Rust toolbox and language-neutral adapters. Use for deterministic production service scheduling, stateful and concurrency bugs, fault injection at I/O boundaries, linearizability, exact replay, reduction, and evidence-driven repair. Choose native backends when the target needs thread, memory, or OS control.
+description: Run bounded on-device correctness verification with a Rust toolbox and language-neutral adapters. Use for guided exploration, native service crash/retry testing, deterministic scheduling, linearizability, exact replay, trace branching, and evidence-driven repair. Choose native backends when the target needs thread, memory, or OS control.
 ---
 
 # Verify Local
@@ -34,13 +34,15 @@ Place the manifest above every declared identity file. Include executable argv, 
 4. Record each invocation and its observable outcome, including receipts, range metadata, bytes, partial responses, timeouts, and cancelled calls. Add unfaulted reads after in-flight work settles. Check the whole history against a separate sequential specification that never calls application planning, range, or receipt code. Preserve real-time precedence and model effects of indeterminate calls within their possible intervals. Compare durable effects with independently decoded observations.
 5. Set `require_terminal: true` in the manifest. Emit a clean terminal result only after the history is complete and its oracle finishes. Step bounds, dead ends, unresolved work, and search exhaustion leave the campaign inconclusive. `verify-async::history::linearize` provides bounded serialization search for up to 64 operations. The S3 append example uses `verify.service.json` and `scripts/service-demo.py` in the application repository.
 
-Use trusted adapters. The subprocess runner bounds transport and process lifetime. Filesystem and network confinement and aggregate memory isolation require another backend.
+Use trusted adapters. For a service with real dependencies, exercise its public client API, give each execution isolated persistent state, wait for an acknowledged fault window, and record what the client actually saw. The toolbox’s `examples/sqlite-http` uses loopback HTTP, SQLite WAL, a killed service process, and restart on the same database. Run `python3 scripts/demo.py --skip-build` after the release build to exercise its correct and defective variants.
+
+The subprocess runner bounds transport and process lifetime. Filesystem and network confinement and aggregate memory isolation require another backend.
 
 ## Explore, reproduce, reduce
 
 ```bash
 verify-local doctor verify.json
-verify-local run verify.json --out .verify/run-001 --runs 100 --steps 80 --seconds 30 --seed 1
+verify-local run verify.json --guided --out .verify/run-001 --runs 100 --steps 80 --seconds 30 --seed 1
 verify-local report .verify/run-001/campaign.json
 verify-local replay verify.json .verify/run-001/failure-0001.json
 verify-local shrink verify.json .verify/run-001/failure-0001.json \
@@ -49,6 +51,10 @@ verify-local report .verify/minimized.json --events --from 0 --limit 8
 ```
 
 Exercise a baseline and a relevant seeded defect to validate oracle sensitivity. Doctor checks configuration only. Every completed exploration trace receives an exact fresh-process replay. Require identical full responses and declared identity; investigate the first divergence.
+
+Guided campaigns save unexplored decisions and visited state/action pairs in `frontier.json`. Continue with `run --corpus-from FILE` in a new output directory and advance the seed for fresh workloads. Coverage obligations restart with each campaign. Use `--max-findings N` to retain multiple distinct replayed failures. On an older pinned binary, check `run --help` for these options.
+
+To investigate a causal hypothesis, inspect available choices with `report TRACE --events --from N --limit 1`, then run `fork MANIFEST TRACE --at N --action ID --steps K --out FILE`. It reconstructs the recorded prefix, takes the chosen action, and replays the resulting experiment. Compare the client observation and failed check under both choices. Report missing scenario witnesses even if the alternate execution avoided the failure.
 
 Read compact command results first. Request a bounded event page for the relevant step. Full identities and observations remain in evidence files; avoid dumping traces into context. Expand a budget only to resolve a concrete gap. Preserve original counterexamples and report interrupted reduction; claim minimality only as reported by the reducer.
 

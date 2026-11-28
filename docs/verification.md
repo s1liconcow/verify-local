@@ -4,9 +4,26 @@
 
 `verify-local` is a Rust control plane for bounded, explicit state-machine exploration. Any language can participate by reading requests and writing responses on standard input/output. The bundled Python and JavaScript adapters demonstrate that boundary; the Rust application example lives in the separate [S3 append proxy repository](https://github.com/s1liconcow/s3-append-proxy).
 
-Each execution starts a new process, resets synthetic state, chooses legal actions, collects property checks, and replays the complete action tape in another fresh process. Exact replay compares every canonical JSON response, including observations, enabled action objects, checks, witnesses, and extension fields. A matching final error alone is insufficient.
+Each execution starts a new process, resets the target to its declared initial state, chooses legal actions, collects property checks, and replays the complete action tape in another fresh process. Exact replay compares every canonical JSON response, including observations, enabled action objects, checks, witnesses, and extension fields. A matching final error alone is insufficient.
 
-Search uses deterministic SplitMix64 choices weighted by the inverse frequency of adapter state/action pairs. State hashes and witnesses are adapter-defined features. Code coverage, native scheduling, OS virtualization, persistent corpus management, distributed workers, and automatic fault interception are outside this implementation.
+The default search uses SplitMix64 choices weighted by the inverse frequency of adapter state/action pairs. Guided mode also queues unvisited alternatives offered by the adapter. The state digest should distinguish future behavior that matters to the oracle. Coarser digests can merge distinct histories.
+
+## Reuse exploration and revisit a decision
+
+```bash
+verify-local run verify.json --guided --out .verify/first --runs 20 --steps 80
+verify-local run verify.json --corpus-from .verify/first/frontier.json \
+  --out .verify/next --runs 20 --steps 80 --seed 21 --max-findings 4
+verify-local report .verify/first/sample-trace.json --events --from 2 --limit 1
+```
+
+A guided campaign alternates fresh reset seeds with queued branches while eligible branches remain. Importing a nonempty frontier gives a branch the first turn. The adapter receives the original workload seed for a branch. The campaign records the separate seed used to choose its continuation. The full prefix counts toward the step bound.
+
+Only matched traces contribute new branches. The queue retains up to 128 untried state/action-ID pairs at events 0 through 63, within 2 MiB of serialized entries. A separately bounded 2 MiB set remembers previously exercised pairs across imports. The report exposes queue and visited-set capacity flags. Once a branch is selected, the controller reconstructs its original actions, verifies the digest of all canonical responses through the branch point, and sends the full saved action. Changed identities or reconstructed prefixes make the attempt inconclusive. Importing a corpus contributes search hints only. Every property and witness needed by the new campaign must be observed again.
+
+For a controlled experiment at a specific event, use `verify-local fork MANIFEST TRACE --at N --action ID --steps K --out FILE`. Event zero is reset. The command matches the prefix, takes the action that the adapter offered at event N, and chooses up to K further actions with the original seed and fresh frequency counts. The default K is zero. It replays the entire resulting trace in a second fresh process and records the parent hash and branch point. A fork can reproduce a violation, complete cleanly within its scenario obligations, or be inconclusive if it omits required checks, witnesses, or a required terminal state. Inspect the observations and the declared boundary when interpreting a changed outcome.
+
+Each run stops at its first failing response. By default the campaign stops at its first replayed failure. With `--max-findings N` (1–64), the campaign retains one trace per distinct primary failing property ID and signature and counts repeat sightings. The run and wall-clock bounds still apply. A later execution error can leave the overall campaign incomplete with confirmed findings in `campaign.json`.
 
 ## Small control plane, full evidence files
 
@@ -16,7 +33,8 @@ Commands return one compact JSON object. Normal output contains the verdict, cou
 | --- | --- |
 | `campaign.json` | Bounds, identity, property counts, witnesses, each run's seed/count/stop reason, evidence references |
 | `sample-trace.json` | First completed clean trace |
-| `failure-0001.json` | First exactly replayed counterexample |
+| `failure-NNNN.json` | First exactly replayed counterexample for a distinct finding |
+| `frontier.json` | Guided campaign’s pending decisions, visited pairs, and execution identity digest |
 | `unconfirmed-failure.json` | Observed failure whose replay could not finish |
 | `divergence.json` | Original and diverging execution plus reason |
 | User-selected minimized file | Reduced valid action tape, full responses, reduction bounds and provenance |
@@ -97,6 +115,12 @@ The subprocess backend runs on POSIX systems and uses process groups for cleanup
 Shrinking performs bounded action deletion. Every accepted candidate must retain enabled-action validity, the same property/signature, and exact repeatability. Invalid schedules and unrelated failures are rejected. A fully completed reducer establishes one-action-deletion minimality under this action representation. Budget interruption reports weaker minimality. Keep the original artifact and preserve both builds if future exact replay matters.
 
 A repaired implementation should pass the retained scenario under an unchanged independent contract, then complete a fresh bounded campaign. Changed action availability or removed checks produces an explicit inconclusive regression. Requirements changes deserve a separate review from an application repair.
+
+## Exercise an external service
+
+The toolbox's `examples/sqlite-http` adapter owns a private database per execution, launches a separate HTTP server on a dynamically allocated loopback port, and drives the public client API. Control pipes expose checkpoints immediately before transaction commit and between commit and reply. A fault action kills the owned child, waits for the observed client disconnect, and permits restart against the same SQLite WAL. The independent oracle checks recovered state on restart and audits the acknowledged credit over HTTP. The runtime version and logical observations enter replay evidence. Port numbers and process IDs are allocation details. The example qualifies process crash recovery on the host filesystem. Kernel crashes, power cuts, packet-level scheduling, and hardware durability are outside its boundary.
+
+For another service, give each run fresh persistent state, synchronize fault actions with observed readiness or I/O checkpoints, include the service and oracle in the manifest identity, and keep child processes in the adapter process group for cleanup. Verify both a correct build and a defect that reaches the intended fault window.
 
 ## Worked application
 

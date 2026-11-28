@@ -15,13 +15,34 @@ cargo build --release --workspace --locked
 python3 scripts/demo.py --skip-build
 ```
 
-The demonstration validates both example manifests and runs 100 executions of 80 actions in each language, replaying every completed execution in a fresh process. It checks the expected outcomes and prints compact results. Evidence stays in a new ignored `.verify/demo-*` directory.
+The demonstration runs 100 executions of 80 actions in each language and checks a separate HTTP/SQLite service through crash, restart, retry, and audit. Each completed execution is replayed in a fresh process. Evidence stays in a new ignored `.verify/demo-*` directory.
 
 To install just the controller:
 
 ```bash
 cargo install --path crates/verify-local --locked
 ```
+
+## Try a real process crash
+
+The ledger example sends an HTTP credit request over loopback to a separate process using an on-disk SQLite WAL. The verifier can kill the service with an open transaction or after commit while the HTTP reply is still pending. It observes the client disconnect, restarts the service on the same database, retries the same credit, and checks the balance through the public HTTP API. Every new execution gets its own database.
+
+```bash
+target/release/verify-local run examples/sqlite-http/verify.json \
+  --guided --out .verify/ledger --runs 8 --steps 12 --seed 1
+target/release/verify-local run examples/sqlite-http/verify-mutant.json \
+  --guided --out .verify/volatile --runs 8 --steps 12 --seed 1
+```
+
+The second command should exit 1 with a replayed `ledger.once` violation. Its deliberately defective service forgets idempotency receipts on restart. The credit survives, and retrying duplicates the durable effect. The full demonstration also shrinks the failure, tests the fixed service against the same trace, and revisits the commit to let its reply through.
+
+## Guided exploration and debugging
+
+- `run --guided` alternates fresh workloads with unexplored decisions from matched traces. Each saved branch carries its original workload seed and a digest of every response up to the decision. Resume from a campaign with `--corpus-from .verify/ledger/frontier.json` and a new output directory. Property and witness counts start fresh on each campaign.
+- `run --max-findings 4` keeps exploring until four distinct property/signature pairs reproduce or the campaign reaches its bounds. The campaign records the number of sightings and one replayable trace per pair. The default is one finding.
+- `report TRACE --events --from N --limit 1` shows action IDs offered at event N. `fork MANIFEST TRACE --at N --action ID --steps 8 --out FILE` reconstructs that event, takes the selected action, explores up to eight more steps, and verifies the new trace by exact replay.
+
+These features follow the guided exploration and replay workflow described by Antithesis. Local control extends to decisions the adapter exposes. The HTTP example uses real sockets, process death, and SQLite recovery. Instruction scheduling, disk power loss, and arbitrary container workloads require separate backends. [Antithesis product overview](https://antithesis.com/product/)
 
 ## Components
 
@@ -31,9 +52,10 @@ cargo install --path crates/verify-local --locked
 | `crates/verify-protocol` | Typed JSONL v1 messages, strict JSON parsing, canonicalization and protocol validation |
 | `crates/verify-async` | Explicit future polling and virtual Tokio time, plus bounded linearizability search |
 | `examples/python`, `examples/javascript` | Equivalent standard-library adapters demonstrating language-neutral operation |
+| `examples/sqlite-http` | HTTP ledger, process fault controls, independent client oracle, and a seeded defect |
 | `skills/verify-local` | Compact agent instructions and on-demand protocol reference |
 
-Each example models a durable idempotent counter with a checkpoint, lost reply, process restart, and retry. It checks one committed effect per operation, agreement with a commit history, and durability of acknowledged operations. Durability is modeled in memory. These examples establish protocol interoperability and bounded behavior within that model.
+The Python and JavaScript counter examples each model a durable idempotent counter with a checkpoint, lost reply, process restart, and retry. They check one committed effect per operation, agreement with a commit history, and durability of acknowledged operations. Durability is modeled in memory. These examples establish protocol interoperability and bounded behavior within that model.
 
 ## Context-efficient tooling
 
@@ -51,13 +73,14 @@ Default output is one compact JSON object containing the outcome, counts, failur
 | `doctor` | Validate manifest and execution identity without launching code |
 | `run` | Explore legal actions within explicit run, step, time and I/O limits |
 | `replay` | Require the original identity and compare every response |
+| `fork` | Try a different enabled action at a recorded event and retain the replayed result |
 | `shrink` | Retain a shorter valid, reproducible failure of the same signature |
 | `regression` | Exercise a preserved failure scenario against changed code with the same pinned contract |
 | `report` | Read a concise campaign or trace summary, with optional event pagination |
 
 A clean campaign reports `NO_FAILURE_WITHIN_BOUNDS`. Failure, missing evidence, and harness problems have distinct outcomes and exit codes. Every completed execution is replayed; full clean traces are sampled for retention. Finite campaigns provide evidence within their stated bounds.
 
-See [verification.md](docs/verification.md) for the protocol, manifests, identity rules, resource boundaries, and adapter authoring. The [recorded validation](docs/validation.json) distinguishes current toolbox checks from the earlier combined-repository evidence.
+See [verification.md](docs/verification.md) for the protocol, manifests, identity rules, resource boundaries, and adapter authoring. The [historical validation](docs/validation.json) records the checks performed when the application moved to its own repository.
 
 ## Application integration
 
@@ -75,8 +98,8 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
-The toolbox tests cover deterministic future scheduling, real-time history constraints, terminal evidence, protocol validation, exact replay, shrinking, regression, identity drift, and subprocess and evidence bounds. CI runs the gates above, builds release binaries, and executes the Python and JavaScript demonstration.
+The toolbox tests cover deterministic future scheduling, real-time history constraints, terminal evidence, protocol validation, exact replay, shrinking, regression, identity drift, and subprocess and evidence bounds. CI runs the gates above, builds release binaries, and executes the language and service demonstrations. Each workflow run publishes the demonstration evidence as the `verification-evidence` artifact for seven days.
 
-Use the installed `verify-local` skill or the exported skill directory to guide integration into a target application. Keep property implementations and production code changes separately reviewable.
+The `verify-local-skill` ZIP on a successful GitHub Actions run contains the installable skill directory. The source is also available under `skills/verify-local`. Keep property implementations and production code changes separately reviewable.
 
 Apache-2.0 licensed. This project is an independent local implementation inspired by property-driven deterministic testing. Antithesis is a separate commercial system.

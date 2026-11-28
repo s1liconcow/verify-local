@@ -1,4 +1,4 @@
 interface:
   display_name: "Verify Local"
-  short_description: "Bounded Rust verification with compact evidence"
-  default_prompt: "Use $verify-local to define properties, run a bounded local campaign, and reduce any reproducible failure."
+  short_description: "Guided local verification, crash testing, and replay"
+  default_prompt: "Use $verify-local to define properties, exercise real service fault windows, and use guided exploration, replay, and trace branching to investigate failures."

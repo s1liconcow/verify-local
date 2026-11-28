@@ -41,6 +41,8 @@ for line in sys.stdin:
         enabled=[{'id':'advance','kind':'schedule'}] if q['op']=='reset' else []
     checks=[{'id':'once','ok':count<=1,'signature':'duplicate_effect','details':{'count':count}}]
     if mode=='missing': checks=[]
+    if mode=='two_failures':
+        checks=[{'id':'once','ok':False,'signature':str(q['seed']%2)}]
     if mode=='omit_at_failure' and count>1: checks=[]
     if mode=='malformed': checks[0]['ok']='yes'
     response={'protocol':1,'request_id':q['request_id'],
@@ -345,4 +347,143 @@ fn existing_evidence_and_escaping_identity_are_refused() {
     fs::write(&f.manifest, serde_json::to_vec(&config).unwrap()).unwrap();
     let (code, result) = cli(&["doctor", strpath(&f.manifest)]);
     assert_eq!(code, 3, "{result}");
+}
+
+#[test]
+fn guided_corpus_reconstructs_prefixes_without_importing_property_evidence() {
+    let f = Fixture::new("fixed", true);
+    let explore = |name: &str, flags: &[&str]| {
+        let out = f.root.join(name);
+        let mut args = vec![
+            "run",
+            strpath(&f.manifest),
+            "--guided",
+            "--out",
+            strpath(&out),
+            "--steps",
+            "1",
+            "--runs",
+            "1",
+        ];
+        args.extend_from_slice(flags);
+        cli(&args)
+    };
+    let (code, first) = explore("initial", &[]);
+    assert_eq!(code, 2, "{first}");
+    assert!(first["guidance"]["pending"].as_u64().unwrap() > 0);
+    let corpus_path = f.root.join("initial/frontier.json");
+    let original = fs::read(&corpus_path).unwrap();
+    let mut corpus: Value = serde_json::from_slice(&original).unwrap();
+    let alt = corpus["branches"][0]["next"].clone();
+    let (code, next) = explore("next", &["--corpus-from", strpath(&corpus_path)]);
+    assert_eq!(code, 2, "{next}");
+    assert_eq!(next["guidance"]["branches_replayed"], 1);
+    let sample: Value =
+        serde_json::from_slice(&fs::read(f.root.join("next/sample-trace.json")).unwrap()).unwrap();
+    assert_eq!(sample["actions"][0], alt);
+    assert_eq!(sample["seed"], corpus["branches"][0]["seed"]);
+    let saved: Value =
+        serde_json::from_slice(&fs::read(f.root.join("next/frontier.json")).unwrap()).unwrap();
+    assert!(
+        saved["visited"].as_array().unwrap().len() > corpus["visited"].as_array().unwrap().len()
+    );
+    assert_eq!(fs::read(&corpus_path).unwrap(), original);
+    corpus["branches"][0]["responses_sha256"] = json!("00".repeat(32));
+    let bad = f.root.join("bad.json");
+    fs::write(&bad, serde_json::to_vec(&corpus).unwrap()).unwrap();
+    let (code, result) = explore("bad", &["--corpus-from", strpath(&bad)]);
+    assert_eq!(code, 2, "{result}");
+    assert_eq!(result["replays"], 0);
+    assert!(result["reason"]
+        .as_str()
+        .unwrap()
+        .contains("prefix diverged"));
+    f.configure("buggy", true);
+    let (code, result) = explore("drift", &["--corpus-from", strpath(&corpus_path)]);
+    assert_eq!(code, 2, "{result}");
+    assert!(result["reason"].as_str().unwrap().contains("identity"));
+}
+
+#[test]
+fn fork_checks_full_prefix_and_replays_the_alternate_action() {
+    let f = Fixture::new("fixed", false);
+    assert_eq!(f.run("run", "1", "4").0, 0);
+    let source = f.root.join("run/sample-trace.json");
+    let original = fs::read(&source).unwrap();
+    let mut trace: Value = serde_json::from_slice(&original).unwrap();
+    let choice = trace["responses"][2]["enabled"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["id"] != trace["actions"][2]["id"])
+        .unwrap()
+        .clone();
+    let branch = |path: &Path, action: &str, destination: &str| {
+        cli(&[
+            "fork",
+            strpath(&f.manifest),
+            strpath(path),
+            "--at",
+            "2",
+            "--action",
+            action,
+            "--out",
+            strpath(&f.root.join(destination)),
+        ])
+    };
+    let id = choice["id"].as_str().unwrap();
+    let (code, forked) = branch(&source, id, "fork.json");
+    assert_eq!(code, 0, "{forked}");
+    let modified = f.root.join("fork.json");
+    let output: Value = serde_json::from_slice(&fs::read(&modified).unwrap()).unwrap();
+    assert_eq!(
+        output["responses"].as_array().unwrap()[..3],
+        trace["responses"].as_array().unwrap()[..3]
+    );
+    assert_eq!(output["actions"][2], choice);
+    assert_eq!(output["actions"].as_array().unwrap().len(), 3);
+    assert_eq!(output["provenance"]["event"], 2);
+    assert_eq!(
+        cli(&["replay", strpath(&f.manifest), strpath(&modified)]).0,
+        0
+    );
+    assert_eq!(fs::read(&source).unwrap(), original);
+    assert_eq!(branch(&source, "absent", "disabled.json").0, 3);
+    trace["responses"][1]["observation"]["extra"] = json!(true);
+    let tampered = f.root.join("tampered.json");
+    fs::write(&tampered, serde_json::to_vec(&trace).unwrap()).unwrap();
+    assert_eq!(branch(&tampered, id, "diverged.json").0, 2);
+    assert!(!f.root.join("diverged.json").exists());
+}
+
+#[test]
+fn repeated_signatures_share_one_replayable_finding() {
+    let f = Fixture::new("two_failures", false);
+    let out = f.root.join("run");
+    let (code, result) = cli(&[
+        "run",
+        strpath(&f.manifest),
+        "--runs",
+        "4",
+        "--max-findings",
+        "3",
+        "--out",
+        strpath(&out),
+    ]);
+    assert_eq!(code, 1, "{result}");
+    assert_eq!(result["replays"], 4);
+    assert_eq!(result["distinct_findings"], 2);
+    let campaign: Value =
+        serde_json::from_slice(&fs::read(out.join("campaign.json")).unwrap()).unwrap();
+    for finding in campaign["findings"].as_array().unwrap() {
+        assert_eq!(finding["occurrences"], 2);
+        let (code, replay) = cli(&[
+            "replay",
+            strpath(&f.manifest),
+            finding["artifact"].as_str().unwrap(),
+        ]);
+        assert_eq!(code, 1, "{replay}");
+        assert_eq!(replay["failure"]["signature"], finding["signature"]);
+    }
+    assert!(!out.join("failure-0003.json").exists());
 }

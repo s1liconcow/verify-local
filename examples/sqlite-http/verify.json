@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "name": "sqlite-http-ledger",
+  "adapter": [
+    "python3",
+    "adapter.py"
+  ],
+  "identity_files": [
+    "adapter.py",
+    "service.py",
+    "oracle.py"
+  ],
+  "contract_files": [
+    "oracle.py"
+  ],
+  "required_properties": [
+    "ledger.recovery",
+    "ledger.receipt",
+    "ledger.once"
+  ],
+  "required_witnesses": [
+    "disconnect_before_commit",
+    "disconnect_after_commit"
+  ],
+  "require_terminal": true,
+  "boundary": {
+    "controlled": [
+      "application process death before or after SQLite commit",
+      "HTTP request, retry and acknowledgement order",
+      "one client, one logical operation and up to one service crash"
+    ],
+    "uncontrolled": [
+      "OS scheduling and TCP internals",
+      "SQLite build, filesystem and storage hardware",
+      "machine power loss and kernel crashes"
+    ]
+  }
+}

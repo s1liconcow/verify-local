@@ -1,5 +1,6 @@
 //! A small control plane: compact summaries on stdout, complete evidence on disk.
 mod engine;
+mod frontier;
 mod model;
 mod transport;
 
@@ -111,6 +112,34 @@ struct Cli {
     #[command(subcommand)]
     command: Operation,
 }
+#[derive(Args)]
+pub struct SearchOptions {
+    /// Alternate fresh seeds with unexplored decisions from exactly replayed traces.
+    #[arg(long)]
+    guided: bool,
+    /// Seed guided exploration with a previous campaign's frontier.json.
+    #[arg(long, value_name = "FILE")]
+    corpus_from: Option<PathBuf>,
+    /// Stop after this many distinct replayed (property, signature) findings, or at the run bound.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=64))]
+    max_findings: u32,
+}
+
+#[derive(Args)]
+pub struct ForkOptions {
+    /// Event zero is the response to reset.
+    #[arg(long)]
+    at: usize,
+    /// ID of a full action offered at that event.
+    #[arg(long)]
+    action: String,
+    /// Further seeded decisions after the selected action.
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=100_000))]
+    steps: u32,
+    #[arg(long)]
+    out: PathBuf,
+}
+
 #[derive(Subcommand)]
 enum Operation {
     /// Validate declared configuration and input identity without running code.
@@ -127,12 +156,23 @@ enum Operation {
         #[arg(long, default_value_t = 1)]
         seed: u64,
         #[command(flatten)]
+        search: SearchOptions,
+        #[command(flatten)]
         limits: Limits,
     },
     /// Replay under exactly the original declared build, runtime, and environment.
     Replay {
         manifest: PathBuf,
         trace: PathBuf,
+        #[command(flatten)]
+        limits: Limits,
+    },
+    /// Reconstruct a recorded event, take an enabled decision, and replay the resulting trace.
+    Fork {
+        manifest: PathBuf,
+        trace: PathBuf,
+        #[command(flatten)]
+        options: ForkOptions,
         #[command(flatten)]
         limits: Limits,
     },
@@ -177,6 +217,7 @@ async fn dispatch(operation: Operation) -> Result<Value> {
             runs,
             steps,
             seed,
+            search,
             limits,
         } => {
             engine::run(
@@ -185,6 +226,7 @@ async fn dispatch(operation: Operation) -> Result<Value> {
                 runs,
                 steps,
                 seed,
+                &search,
                 &limits,
             )
             .await
@@ -194,6 +236,20 @@ async fn dispatch(operation: Operation) -> Result<Value> {
             trace,
             limits,
         } => engine::replay(&model::Manifest::load(&manifest)?, &trace, &limits).await,
+        Operation::Fork {
+            manifest,
+            trace,
+            options,
+            limits,
+        } => {
+            engine::fork(
+                &model::Manifest::load(&manifest)?,
+                &trace,
+                &options,
+                &limits,
+            )
+            .await
+        }
         Operation::Shrink {
             manifest,
             trace,

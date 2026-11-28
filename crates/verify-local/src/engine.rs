@@ -1,7 +1,8 @@
 use crate::{
+    frontier::{Branch, Frontier, Visits},
     model::{self, Evidence, Failure, Identity, Manifest, Trace},
     transport::Session,
-    Error, Limits, Result,
+    Error, ForkOptions, Limits, Result, SearchOptions,
 };
 use serde_json::{json, Value};
 use std::{
@@ -13,7 +14,6 @@ use tokio::time::{Duration, Instant};
 use verify_protocol::{canonical_json, digest, Action, Request, Response};
 
 const NOVELTY_LIMIT: usize = 100_000;
-type Visits = BTreeMap<(String, String), u32>;
 struct Random(u64);
 impl Random {
     fn next(&mut self) -> u64 {
@@ -36,12 +36,43 @@ struct Execution<'a> {
     deadline: Instant,
 }
 
+enum Decisions<'a> {
+    Tape(&'a [Action]),
+    Explore {
+        steps: usize,
+        branch: Option<&'a Branch>,
+        choice_seed: u64,
+        visits: &'a mut Visits,
+    },
+}
+
+fn choose(response: &Response, visits: &Visits, random: &mut Random) -> Action {
+    let weights: Vec<f64> = response
+        .enabled
+        .iter()
+        .map(|action| {
+            let count = visits
+                .get(&(response.state.clone(), action.id.clone()))
+                .copied()
+                .unwrap_or(0);
+            1.0 / (1.0 + f64::from(count))
+        })
+        .collect();
+    let mut threshold = random.fraction() * weights.iter().sum::<f64>();
+    let index = weights
+        .iter()
+        .position(|weight| {
+            threshold -= weight;
+            threshold < 0.0
+        })
+        .unwrap_or(weights.len() - 1);
+    response.enabled[index].clone()
+}
+
 async fn execute(
     execution: &Execution<'_>,
     seed: u64,
-    steps: usize,
-    tape: Option<&[Action]>,
-    mut visits: Option<&mut Visits>,
+    mut decisions: Decisions<'_>,
 ) -> Result<Trace> {
     let Execution {
         manifest,
@@ -56,66 +87,49 @@ async fn execute(
         let mut evidence_bytes = canonical_json(&raw)?.len();
         trace.responses.push(raw);
         trace.failure = model::failure(&response, 0);
-        let mut random = Random(seed);
-        let count = tape.map_or(steps, |a| a.len());
+        let (count, choice_seed, required) = match &decisions {
+            Decisions::Tape(actions) => (actions.len(), seed, actions.len()),
+            Decisions::Explore {
+                steps,
+                choice_seed,
+                branch,
+                ..
+            } => (
+                *steps,
+                *choice_seed,
+                branch.map_or(0, |b| b.prefix.len() + 1),
+            ),
+        };
+        let mut random = Random(choice_seed);
         for index in 0..count {
-            if trace.failure.is_some() {
-                trace.stop = "property_violation".into();
+            if trace.failure.is_some() || response.terminal || response.enabled.is_empty() {
                 break;
             }
-            if response.terminal {
-                if tape.is_some() {
-                    return Err(Error::invalid("action tape continues after terminal state"));
-                }
-                trace.stop = "terminal".into();
-                break;
-            }
-            if response.enabled.is_empty() {
-                if tape.is_some() {
-                    return Err(Error::invalid("no enabled action at replay step"));
-                }
-                trace.stop = "no_enabled_actions".into();
-                break;
-            }
-            let action = if let Some(tape) = tape {
-                let action = &tape[index];
-                if !response.enabled.contains(action) {
-                    return Err(Error::invalid(format!(
-                        "action {index} is disabled in current state"
-                    )));
-                }
-                action.clone()
-            } else {
-                let weights: Vec<f64> = response
-                    .enabled
-                    .iter()
-                    .map(|a| {
-                        let n = visits
-                            .as_ref()
-                            .and_then(|v| v.get(&(response.state.clone(), a.id.clone())))
-                            .copied()
-                            .unwrap_or(0);
-                        1.0 / (1.0 + f64::from(n))
-                    })
-                    .collect();
-                let mut threshold = random.fraction() * weights.iter().sum::<f64>();
-                let mut selected = weights.len() - 1;
-                for (i, w) in weights.iter().enumerate() {
-                    threshold -= w;
-                    if threshold < 0.0 {
-                        selected = i;
-                        break;
+            let action = match &mut decisions {
+                Decisions::Tape(tape) => tape[index].clone(),
+                Decisions::Explore { branch, visits, .. } => {
+                    let action = match branch {
+                        Some(b) if index < b.prefix.len() => b.prefix[index].clone(),
+                        Some(b) if index == b.prefix.len() => {
+                            b.check_prefix(&trace)?;
+                            b.next.clone()
+                        }
+                        _ => choose(&response, visits, &mut random),
+                    };
+                    if visits.len() < NOVELTY_LIMIT {
+                        let count = visits
+                            .entry((response.state.clone(), action.id.clone()))
+                            .or_default();
+                        *count = count.saturating_add(1);
                     }
+                    action
                 }
-                let action = response.enabled[selected].clone();
-                if let Some(v) = visits.as_mut() {
-                    let key = (response.state.clone(), action.id.clone());
-                    if v.len() < NOVELTY_LIMIT {
-                        *v.entry(key).or_default() += 1;
-                    }
-                }
-                action
             };
+            if !response.enabled.contains(&action) {
+                return Err(Error::invalid(format!(
+                    "action {index} is disabled in current state"
+                )));
+            }
             evidence_bytes = evidence_bytes.saturating_add(canonical_json(&action)?.len());
             trace.actions.push(action.clone());
             let (next, raw) = session
@@ -139,12 +153,10 @@ async fn execute(
             "step_bound"
         }
         .into();
-        if let Some(tape) = tape {
-            if tape.len() != trace.actions.len() {
-                return Err(Error::invalid(
-                    "tape continues after first property violation",
-                ));
-            }
+        if trace.actions.len() < required {
+            return Err(Error::invalid(
+                "recorded decisions continue after failure, termination, or dead end",
+            ));
         }
         Ok(trace)
     }
@@ -217,12 +229,21 @@ fn compact_failure(failure: &Option<Failure>) -> Value {
         .map(|f| json!({"property":f.property,"signature":f.signature,"step":f.step}))
         .unwrap_or(Value::Null)
 }
+#[derive(serde::Serialize)]
+struct Finding {
+    property: String,
+    signature: String,
+    occurrences: usize,
+    artifact: PathBuf,
+}
+
 pub async fn run(
     manifest: &Manifest,
     out: &Path,
     runs: usize,
     steps: usize,
     seed: u64,
+    search: &SearchOptions,
     limits: &Limits,
 ) -> Result<Value> {
     let started = Instant::now();
@@ -234,6 +255,13 @@ pub async fn run(
         limits,
         deadline,
     };
+    let guided = search.guided || search.corpus_from.is_some();
+    let mut frontier = match &search.corpus_from {
+        Some(path) => Frontier::load(path, &identity)?,
+        None => Frontier::default(),
+    };
+    let imported = frontier.len();
+    let mut branches_run = 0;
     let out = output_dir(out)?;
     let mut evidence = Evidence::default();
     let mut visits = Visits::new();
@@ -242,6 +270,7 @@ pub async fn run(
     let mut replayed_count = 0usize;
     let mut observed: Option<Trace> = None;
     let mut found = None;
+    let mut findings = Vec::<Finding>::new();
     let result: Result<()> = async {
         for index in 0..runs {
             if Instant::now() >= deadline {
@@ -249,17 +278,40 @@ pub async fn run(
                     "campaign wall-clock budget exhausted before requested runs",
                 ));
             }
-            let run_seed = seed
+            let choice_seed = seed
                 .checked_add(index as u64)
                 .ok_or_else(|| Error::harness("seed overflow"))?;
-            let mut trace = execute(&execution, run_seed, steps, None, Some(&mut visits)).await?;
+            // Reserve alternating runs for new workloads even when the frontier is deep.
+            let try_branch = if imported > 0 {
+                index.is_multiple_of(2)
+            } else {
+                !index.is_multiple_of(2)
+            };
+            let branch = if guided && try_branch {
+                frontier.candidate(steps).cloned()
+            } else {
+                None
+            };
+            let run_seed = branch.as_ref().map_or(choice_seed, |b| b.seed);
+            let mut trace = execute(
+                &execution,
+                run_seed,
+                Decisions::Explore {
+                    steps,
+                    branch: branch.as_ref(),
+                    choice_seed,
+                    visits: &mut visits,
+                },
+            )
+            .await?;
             evidence.add(&trace)?;
             records.push(json!({
                 "seed":run_seed, "actions":trace.actions.len(), "stop":trace.stop,
-                "failure":compact_failure(&trace.failure)
+                "failure":compact_failure(&trace.failure), "choice_seed":choice_seed,
+                "branch":branch.as_ref().map(|b| json!({"event":b.prefix.len(),"action":b.next.id}))
             }));
             observed = Some(trace.clone());
-            let replay = execute(&execution, run_seed, steps, Some(&trace.actions), None).await?;
+            let replay = execute(&execution, run_seed, Decisions::Tape(&trace.actions)).await?;
             if let Err(error) = trace.compare(&replay) {
                 trace.reproducible = Some(false);
                 model::write_artifact(
@@ -277,17 +329,38 @@ pub async fn run(
             }
             replayed_count += 1;
             trace.reproducible = Some(true);
-            if trace.failure.is_some() {
-                model::write_artifact(&out.join("failure-0001.json"), &trace)?;
-                artifacts.insert(
-                    "failure".into(),
-                    out.join("failure-0001.json").display().to_string(),
-                );
-                found = trace.failure.clone();
-                observed = None;
-                break;
+            if guided {
+                branches_run += usize::from(branch.is_some());
+                frontier.discard_visited(&visits, branch.as_ref());
+                frontier.collect(&trace, &visits)?;
             }
-            if index == 0 {
+            if let Some(failure) = &trace.failure {
+                if let Some(existing) = findings
+                    .iter_mut()
+                    .find(|f| f.property == failure.property && f.signature == failure.signature)
+                {
+                    existing.occurrences += 1;
+                } else {
+                    let path = out.join(format!("failure-{:04}.json", findings.len() + 1));
+                    model::write_artifact(&path, &trace)?;
+                    if findings.is_empty() {
+                        found = trace.failure.clone();
+                        artifacts.insert("failure".into(), path.display().to_string());
+                    }
+                    findings.push(Finding {
+                        property: failure.property.clone(),
+                        signature: failure.signature.clone(),
+                        occurrences: 1,
+                        artifact: path,
+                    });
+                }
+                observed = None;
+                if findings.len() == search.max_findings as usize {
+                    break;
+                }
+                continue;
+            }
+            if !artifacts.contains_key("sample") {
                 model::write_artifact(&out.join("sample-trace.json"), &trace)?;
                 artifacts.insert(
                     "sample".into(),
@@ -321,19 +394,17 @@ pub async fn run(
         Err(error) => (error.outcome().into(), error.to_string()),
     };
     if let Some(trace) = observed.filter(|t| t.failure.is_some()) {
-        if !artifacts.contains_key("failure") {
-            match model::write_artifact(&out.join("unconfirmed-failure.json"), &trace) {
-                Ok(()) => {
-                    artifacts.insert(
-                        "unconfirmed_failure".into(),
-                        out.join("unconfirmed-failure.json").display().to_string(),
-                    );
-                }
-                Err(error) => {
-                    reason.push_str(&format!(
-                        "; failure evidence could not be retained: {error}"
-                    ));
-                }
+        match model::write_artifact(&out.join("unconfirmed-failure.json"), &trace) {
+            Ok(()) => {
+                artifacts.insert(
+                    "unconfirmed_failure".into(),
+                    out.join("unconfirmed-failure.json").display().to_string(),
+                );
+            }
+            Err(error) => {
+                reason.push_str(&format!(
+                    "; failure evidence could not be retained: {error}"
+                ));
             }
         }
     }
@@ -348,18 +419,32 @@ pub async fn run(
         outcome = "INCONCLUSIVE".into();
         reason = error.to_string();
     }
+    if guided {
+        let path = out.join("frontier.json");
+        frontier.save(&path, &identity)?;
+        artifacts.insert("frontier".into(), path.display().to_string());
+    }
+    let guidance = if guided {
+        Some(
+            json!({"imported":imported, "branches_replayed":branches_run,
+        "pending":frontier.len(), "queue_capped":frontier.capped,"visited_capped":frontier.visited_capped()}),
+        )
+    } else {
+        None
+    };
     let elapsed_ms = started.elapsed().as_millis();
     let campaign = json!({
         "format":"verify-local-campaign","version":2,"name":manifest.config.name,
         "outcome":outcome,"reason":reason,"identity":identity,"boundary":manifest.config.boundary,
-        "bounds":{"runs":runs,"steps":steps,"seed":seed,"limits":limits,
+        "findings":findings, "bounds":{"runs":runs,"steps":steps,"seed":seed,"limits":limits,"max_findings":search.max_findings,
                   "require_terminal":manifest.config.require_terminal},
         "runs_completed":records.len(),"actions":evidence.actions,"replays_matched":replayed_count,
         "elapsed_ms":elapsed_ms,"properties":evidence.properties,"witnesses":evidence.witnesses,
         "missing_properties":missing_properties,"missing_witnesses":missing_witnesses,
         "unique_states":evidence.states.len(),"unique_transitions":visits.len(),
         "novelty_capped":evidence.states.len()>=NOVELTY_LIMIT||visits.len()>=NOVELTY_LIMIT,
-        "search":"seeded state/action frequency weighting","runs":records,"artifacts":artifacts,
+        "search":if guided {"replayed frontier and fresh seeded frequency weighting"} else {"seeded state/action frequency weighting"},
+        "guidance":guidance,"runs":records,"artifacts":artifacts,
         "isolation":"trusted host process; no filesystem, network or aggregate memory confinement",
         "coverage":"adapter-defined properties, witnesses and state features; no code coverage claim"
     });
@@ -368,7 +453,7 @@ pub async fn run(
         json!({"outcome":outcome,"reason":reason,"runs":records.len(),"actions":evidence.actions,
         "replays":replayed_count,"elapsed_ms":elapsed_ms,"failure":compact_failure(&found),
         "missing_properties":short_list(&missing_properties),"missing_witnesses":short_list(&missing_witnesses),
-        "campaign":out.join("campaign.json"),"artifacts":artifacts}),
+        "distinct_findings":findings.len(), "campaign":out.join("campaign.json"),"artifacts":artifacts,"guidance":guidance}),
     )
 }
 
@@ -395,18 +480,17 @@ pub async fn replay(manifest: &Manifest, path: &Path, limits: &Limits) -> Result
         limits,
         deadline,
     };
-    let replay = execute(
-        &execution,
-        trace.seed,
-        trace.actions.len(),
-        Some(&trace.actions),
-        None,
-    )
-    .await?;
+    let replay = execute(&execution, trace.seed, Decisions::Tape(&trace.actions)).await?;
     trace.compare(&replay)?;
     manifest.require_identity(&identity)?;
+    let mut result = scenario_result(manifest, &replay)?;
+    result["trace"] = json!(path);
+    Ok(result)
+}
+
+fn scenario_result(manifest: &Manifest, replay: &Trace) -> Result<Value> {
     let mut evidence = Evidence::default();
-    evidence.add(&replay)?;
+    evidence.add(replay)?;
     let (missing_properties, missing_witnesses) = missing(manifest, &evidence);
     let outcome = if replay.failure.is_some() {
         "FOUND"
@@ -420,10 +504,57 @@ pub async fn replay(manifest: &Manifest, path: &Path, limits: &Limits) -> Result
         "NO_FAILURE_WITHIN_BOUNDS"
     };
     Ok(json!({"outcome":outcome,
-        "replay_match":true,"actions":trace.actions.len(),"failure":compact_failure(&trace.failure),
+        "replay_match":true,"actions":replay.actions.len(),"failure":compact_failure(&replay.failure),
         "stop":replay.stop,"missing_properties":short_list(&missing_properties),
         "missing_witnesses":short_list(&missing_witnesses),
-        "scope":"exact recorded trace only; no new state-space exploration","trace":path}))
+        "scope":"retained scenario only"}))
+}
+
+pub async fn fork(
+    manifest: &Manifest,
+    path: &Path,
+    options: &ForkOptions,
+    limits: &Limits,
+) -> Result<Value> {
+    let out = absolute_file(&options.out)?;
+    let original = Trace::load(path)?;
+    let identity = manifest.require_identity(&original.identity)?;
+    let branch = Branch::at(&original, options.at, &options.action)?;
+    let steps = options.at + 1 + options.steps as usize;
+    if steps > 100_000 {
+        return Err(Error::harness("fork exceeds 100000 total actions"));
+    }
+    let execution = Execution {
+        manifest,
+        identity: &identity,
+        limits,
+        deadline: Instant::now() + Duration::from_secs_f64(limits.seconds),
+    };
+    let mut trace = execute(
+        &execution,
+        original.seed,
+        Decisions::Explore {
+            steps,
+            branch: Some(&branch),
+            choice_seed: original.seed,
+            visits: &mut Visits::new(),
+        },
+    )
+    .await?;
+    let repeated = execute(&execution, original.seed, Decisions::Tape(&trace.actions)).await?;
+    trace.compare(&repeated)?;
+    manifest.require_identity(&identity)?;
+    trace.reproducible = Some(true);
+    trace.provenance = Some(
+        json!({"operation":"fork","source_trace_sha256":model::hash_file(path)?,
+        "event":options.at, "action":options.action,"original_next":original.actions.get(options.at)}),
+    );
+    let mut result = scenario_result(manifest, &trace)?;
+    model::write_artifact(&out, &trace)?;
+    result["artifact"] = json!(out);
+    result["operation"] = json!("fork");
+    result["branch_event"] = json!(options.at);
+    Ok(result)
 }
 
 pub async fn shrink(
@@ -450,9 +581,7 @@ pub async fn shrink(
     let baseline = execute(
         &execution,
         original.seed,
-        original.actions.len(),
-        Some(&original.actions),
-        None,
+        Decisions::Tape(&original.actions),
     )
     .await?;
     original.compare(&baseline)?;
@@ -504,15 +633,7 @@ pub async fn shrink(
                     .cloned()
                     .collect()
             };
-            let test = match execute(
-                &execution,
-                original.seed,
-                actions.len(),
-                Some(&actions),
-                None,
-            )
-            .await
-            {
+            let test = match execute(&execution, original.seed, Decisions::Tape(&actions)).await {
                 Ok(test) => test,
                 Err(Error::Invalid(_)) => {
                     invalid += 1;
@@ -532,24 +653,17 @@ pub async fn shrink(
             if !matches {
                 continue;
             }
-            let repeated = match execute(
-                &execution,
-                test.seed,
-                test.actions.len(),
-                Some(&test.actions),
-                None,
-            )
-            .await
-            {
-                Ok(repeated) => repeated,
-                Err(Error::Harness(reason)) => return Err(Error::harness(reason)),
-                Err(error) => {
-                    exhausted = true;
-                    diverged = matches!(error, Error::Invalid(_) | Error::Divergence(_));
-                    interruption = Some(error.to_string());
-                    break 'reduce;
-                }
-            };
+            let repeated =
+                match execute(&execution, test.seed, Decisions::Tape(&test.actions)).await {
+                    Ok(repeated) => repeated,
+                    Err(Error::Harness(reason)) => return Err(Error::harness(reason)),
+                    Err(error) => {
+                        exhausted = true;
+                        diverged = matches!(error, Error::Invalid(_) | Error::Divergence(_));
+                        interruption = Some(error.to_string());
+                        break 'reduce;
+                    }
+                };
             if let Err(error) = test.compare(&repeated) {
                 exhausted = true;
                 diverged = true;
@@ -620,17 +734,13 @@ pub async fn regression(
     let mut candidate = execute(
         &execution,
         original.seed,
-        original.actions.len(),
-        Some(&original.actions),
-        None,
+        Decisions::Tape(&original.actions),
     )
     .await?;
     let repeated = execute(
         &execution,
         original.seed,
-        original.actions.len(),
-        Some(&original.actions),
-        None,
+        Decisions::Tape(&original.actions),
     )
     .await?;
     candidate.compare(&repeated)?;
@@ -722,7 +832,9 @@ pub fn report(path: &Path, events: bool, from: usize, limit: usize) -> Result<Va
             Ok(
                 json!({"outcome":value["outcome"],"reason":value["reason"],"runs":value["runs_completed"],
                 "actions":value["actions"],"replays":value["replays_matched"],"elapsed_ms":value["elapsed_ms"],
-                "artifacts":value["artifacts"],"property_page":{"from":from,"limit":limit,"total":properties.len(),"items":selected},
+                "artifacts":value["artifacts"],"guidance":value["guidance"],
+                "distinct_findings":value["findings"].as_array().map(Vec::len).unwrap_or_else(|| usize::from(value["artifacts"]["failure"].is_string())),
+                "property_page":{"from":from,"limit":limit,"total":properties.len(),"items":selected},
                 "missing_properties":short_list(&serde_json::from_value::<Vec<String>>(value["missing_properties"].clone())?),
                 "missing_witnesses":short_list(&serde_json::from_value::<Vec<String>>(value["missing_witnesses"].clone())?)}),
             )
@@ -736,7 +848,9 @@ pub fn report(path: &Path, events: bool, from: usize, limit: usize) -> Result<Va
                         "state":r.state,"checks":r.checks.iter().take(8).map(|c|json!({"id":c.id,"ok":c.ok,"signature":c.signature})).collect::<Vec<_>>(),
                         "checks_omitted":r.checks.len().saturating_sub(8),
                         "witnesses":r.witnesses.iter().take(8).collect::<Vec<_>>(),
-                        "witnesses_omitted":r.witnesses.len().saturating_sub(8),"enabled_actions":r.enabled.len()})
+                        "witnesses_omitted":r.witnesses.len().saturating_sub(8),"enabled_actions":r.enabled.len(),
+                        "choices":r.enabled.iter().take(8).map(|a| &a.id).collect::<Vec<_>>(),
+                        "choices_omitted":r.enabled.len().saturating_sub(8)})
                 }).collect::<Vec<_>>()
             } else {
                 Vec::new()
